@@ -46,6 +46,23 @@ async def main(request: str) -> int:
     return 0
 
 
+async def main_with_retry(request: str, attempts: int = 4) -> int:
+    """Retry the whole run when Gemini is temporarily overloaded (503) or rate-limited (429)."""
+    from google.genai import errors
+
+    for attempt in range(1, attempts + 1):
+        try:
+            return await main(request)
+        except (errors.ServerError, errors.ClientError) as exc:
+            code = getattr(exc, "code", None)
+            if code not in (429, 500, 503) or attempt == attempts:
+                raise
+            wait = 15 * attempt
+            print(f"\nGemini is busy (HTTP {code}). Retrying in {wait}s (attempt {attempt + 1}/{attempts})...")
+            await asyncio.sleep(wait)
+    return 1
+
+
 if __name__ == "__main__":
     request = " ".join(sys.argv[1:]) or DEFAULT_REQUEST
-    sys.exit(asyncio.run(main(request)))
+    sys.exit(asyncio.run(main_with_retry(request)))
