@@ -9,7 +9,7 @@ except ImportError:  # pragma: no cover
     pass
 
 # LLM used by every ADK agent
-MODEL = os.getenv("ADK_MODEL", "gemini-2.5-flash")
+MODEL = os.getenv("ADK_MODEL", "gemini-3.8-flash")
 
 # REST Countries API (public, no API key needed).
 # The /all endpoint requires an explicit field list (max 10 fields).
