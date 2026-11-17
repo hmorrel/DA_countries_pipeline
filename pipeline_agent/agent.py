@@ -30,7 +30,7 @@ from .tools import (
 ingestion_agent = LlmAgent(
     name="ingestion_agent",
     model=config.MODEL,
-    description="Pulls raw country data from the public REST Countries API.",
+    description="Pulls raw country data from the public World Bank Open Data API.",
     instruction=(
         "You are the data ingestion step of a data pipeline. "
         "Call the fetch_country_data tool exactly once. "
@@ -50,11 +50,11 @@ processing_agent = LlmAgent(
         "{ingestion_result?}\n\n"
         "If ingestion failed, say so and do not call any tool.\n"
         "Otherwise, read the user's original request and choose filter parameters:\n"
-        "- region: 'all' unless the user named one of Africa, Americas, Asia, Europe, Oceania.\n"
+        "- region: 'all' unless the user named a region. World Bank regions are: East Asia & Pacific, Europe & Central Asia, Latin America & Caribbean, Middle East & North Africa, North America, South Asia, Sub-Saharan Africa. A short name like 'Europe' or 'Africa' also works.\n"
         "- min_population: 0 unless the user asked to exclude small countries "
         "(e.g. 'over 1 million' -> 1000000).\n"
-        "Call transform_country_data once with those parameters. If it returns an error about "
-        "an invalid region, retry once with region='all'. "
+        "Call transform_country_data once with those parameters. If it returns an error saying no countries matched, "
+        "retry once using one of the valid regions listed in the error, or 'all'. "
         "Reply with 2-3 sentences: the parameters you chose and the headline findings."
     ),
     tools=[transform_country_data],

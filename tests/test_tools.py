@@ -78,3 +78,28 @@ def test_steps_out_of_order_return_errors(tmp_path, monkeypatch):
     assert tools.transform_country_data("all", 0, empty)["status"] == "error"
     assert tools.generate_html_report(empty)["status"] == "error"
     assert tools.upload_to_cloud_storage(empty)["status"] == "error"
+
+
+def test_fetch_parses_world_bank_responses(tmp_path, monkeypatch):
+    """Mock the three World Bank calls and check they are merged correctly."""
+    monkeypatch.setattr(config, "OUTPUT_DIR", str(tmp_path))
+    meta = {"page": 1, "pages": 1}
+    responses = {
+        "/country?": [meta, [
+            {"id": "DEU", "name": "Germany", "region": {"value": "Europe & Central Asia"},
+             "incomeLevel": {"value": "High income"}, "capitalCity": "Berlin"},
+            {"id": "WLD", "name": "World", "region": {"value": "Aggregates"}},
+        ]],
+        "SP.POP.TOTL": [meta, [{"countryiso3code": "DEU", "value": 83_000_000},
+                               {"countryiso3code": "WLD", "value": 8_000_000_000}]],
+        "AG.LND.TOTL.K2": [meta, [{"countryiso3code": "DEU", "value": 349_390}]],
+    }
+    monkeypatch.setattr(tools, "_get_json",
+                        lambda url: next(v for k, v in responses.items() if k in url))
+    context = SimpleNamespace(state={})
+    result = tools.fetch_country_data(context)
+    assert result["status"] == "success" and result["records_fetched"] == 1
+    raw = json.loads(open(context.state["raw_path"]).read())
+    assert raw[0]["population"] == 83_000_000 and raw[0]["area"] == 349_390
+    out = tools.transform_records(raw, region="Europe")
+    assert out["kept_records"] == 1 and out["by_subregion"][0]["subregion"] == "High income"

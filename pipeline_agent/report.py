@@ -38,15 +38,14 @@ def render_report(p: dict[str, Any], run_id: str) -> str:
     data_json = json.dumps(chart_data).replace("</", "<\\/")
 
     region_table = _table(
-        ["Region", "Countries", "Population", "Area (km²)", "People / km²", "Median pop.",
-         "Largest country", "Landlocked", "Languages"],
+        ["Region", "Countries", "Population", "Land area (km²)", "People / km²", "Median pop.",
+         "Largest country"],
         [[r["region"], r["countries"], _fmt_int(r["total_population"]), _fmt_int(r["total_area_km2"]),
-          _fmt_num(r["density_per_km2"]), _fmt_int(r["median_population"]), r["largest_country"],
-          r["landlocked_countries"], r["distinct_languages"]] for r in regions],
-        numeric_cols={1, 2, 3, 4, 5, 7, 8},
+          _fmt_num(r["density_per_km2"]), _fmt_int(r["median_population"]), r["largest_country"]] for r in regions],
+        numeric_cols={1, 2, 3, 4, 5},
     )
     sub_table = _table(
-        ["Subregion", "Region", "Countries", "Population", "People / km²", "Largest country"],
+        ["Income group", "Region", "Countries", "Population", "People / km²", "Largest country"],
         [[s["subregion"], s["region"], s["countries"], _fmt_int(s["total_population"]),
           _fmt_num(s["density_per_km2"]), s["largest_country"]] for s in p["by_subregion"]],
         numeric_cols={2, 3, 4},
@@ -98,7 +97,7 @@ def render_report(p: dict[str, Any], run_id: str) -> str:
 <main>
   <h1>World Countries: Population &amp; Density by Region</h1>
   <p class="sub">Scope: {scope} · min population {params["min_population"]:,} · run {html.escape(run_id)} ·
-     generated {html.escape(p["generated_at"])} · source: REST Countries API</p>
+     generated {html.escape(p["generated_at"])} · source: World Bank Open Data API</p>
 
   <section class="kpis">
     <div class="kpi"><div class="label">Countries analyzed</div><div class="value">{_fmt_int(p["kept_records"])}</div></div>
@@ -118,11 +117,11 @@ def render_report(p: dict[str, Any], run_id: str) -> str:
     <div class="card"><h2>Most populous countries</h2>{pop_table}</div>
     <div class="card"><h2>Most densely populated (area ≥ 1,000 km²)</h2>{dense_table}</div>
   </section>
-  <section class="card"><h2>Subregion summary</h2>{sub_table}</section>
+  <section class="card"><h2>Region × income group</h2>{sub_table}</section>
 
   <footer>Data quality: {dropped["no_population_or_area"]} records without population/area removed,
     {dropped["duplicate"]} duplicates removed, {dropped["filtered_out"]} excluded by filters.
-    Density is total population ÷ total land area of the group (population-weighted).</footer>
+    Population and land area are each country's most recent World Bank value. Density is total population ÷ total land area of the group (population-weighted).</footer>
 </main>
 <script>
   const D = {data_json};

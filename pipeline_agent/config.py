@@ -11,14 +11,10 @@ except ImportError:  # pragma: no cover
 # LLM used by every ADK agent
 MODEL = os.getenv("ADK_MODEL", "gemini-3.8-flash")
 
-# REST Countries API (public, no API key needed).
-# The /all endpoint requires an explicit field list (max 10 fields).
-API_URL = "https://restcountries.com/v3.1/all"
-API_FIELDS = [
-    "name", "cca3", "region", "subregion", "population",
-    "area", "landlocked", "unMember", "languages", "currencies",
-]
-VALID_REGIONS = {"Africa", "Americas", "Asia", "Europe", "Oceania", "Antarctic"}
+# World Bank Open Data API (public, no API key needed)
+WB_BASE_URL = "https://api.worldbank.org/v2"
+WB_POPULATION = "SP.POP.TOTL"   # total population
+WB_LAND_AREA = "AG.LND.TOTL.K2"  # land area, km²
 
 # Storage: "gcs" (default, used for the assignment) or "local" (offline dev only)
 STORAGE_BACKEND = os.getenv("STORAGE_BACKEND", "gcs").lower()

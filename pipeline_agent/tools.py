@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import statistics
+import time
 import urllib.error
 import urllib.request
 from collections import defaultdict
@@ -37,7 +38,7 @@ def _run_dir(run_id: str) -> Path:
 
 
 def flatten_country(raw: dict[str, Any]) -> dict[str, Any]:
-    """Turn one nested REST Countries record into a flat row."""
+    """Turn one nested country record into a flat row."""
     name = raw.get("name") or {}
     population = int(raw.get("population") or 0)
     area = float(raw.get("area") or 0)
@@ -102,7 +103,7 @@ def transform_records(
             dropped["duplicate"] += 1
             continue
         seen.add(row["code"])
-        if region.lower() != "all" and row["region"].lower() != region.lower():
+        if region.lower() != "all" and region.lower() not in row["region"].lower():
             dropped["filtered_out"] += 1
             continue
         if row["population"] < min_population:
@@ -167,46 +168,89 @@ def write_countries_csv(rows: list[dict[str, Any]], path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _get_json(url: str):
+    """GET a URL and parse JSON, retrying transient network errors."""
+    req = urllib.request.Request(url, headers={"User-Agent": "adk-countries-pipeline/1.0"})
+    last_error = None
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
+            last_error = exc
+            time.sleep(2 * (attempt + 1))
+    raise RuntimeError(f"Request failed after 3 attempts: {last_error}")
+
+
+def _wb_rows(payload) -> list:
+    """World Bank responses look like [metadata, [rows...]]."""
+    if isinstance(payload, list) and len(payload) == 2 and isinstance(payload[1], list):
+        return payload[1]
+    raise ValueError(f"Unexpected World Bank response: {str(payload)[:300]}")
+
+
+def _wb_indicator(code: str) -> dict:
+    """Most recent non-empty value of an indicator for every country, keyed by ISO3 code."""
+    url = f"{config.WB_BASE_URL}/country/all/indicator/{code}?format=json&per_page=20000&mrnev=1"
+    values = {}
+    for row in _wb_rows(_get_json(url)):
+        iso3, value = row.get("countryiso3code"), row.get("value")
+        if iso3 and value is not None:
+            values[iso3] = value
+    return values
+
+
 def fetch_country_data(tool_context) -> dict:
-    """Downloads the current list of all countries from the public REST Countries API
-    and saves the raw JSON response to a local file for this pipeline run.
+    """Downloads country data from the public World Bank Open Data API (country list,
+    total population, and land area) and saves the combined raw JSON to a local file
+    for this pipeline run.
 
     Returns:
         A dict with status, run_id, the number of records fetched, and the raw file path.
     """
-    url = f"{config.API_URL}?fields={','.join(config.API_FIELDS)}"
-    req = urllib.request.Request(url, headers={"User-Agent": "adk-countries-pipeline/1.0"})
-    last_error = None
-    for attempt in range(3):  # small retry loop for transient network errors
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-            break
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
-            last_error = exc
-    else:
-        return {"status": "error", "message": f"Could not reach REST Countries API: {last_error}"}
+    try:
+        countries = _wb_rows(_get_json(f"{config.WB_BASE_URL}/country?format=json&per_page=400"))
+        population = _wb_indicator(config.WB_POPULATION)
+        area = _wb_indicator(config.WB_LAND_AREA)
+    except Exception as exc:
+        return {"status": "error", "message": f"Could not fetch World Bank data: {exc}"}
 
-    if not isinstance(data, list) or not data:
-        return {"status": "error", "message": "API returned no country records."}
+    records = []
+    for c in countries:
+        region = (c.get("region") or {}).get("value", "")
+        if not region or region == "Aggregates":  # skip "World", "Euro area", etc.
+            continue
+        iso3 = c.get("id")
+        records.append({
+            "name": {"common": c.get("name", "")},
+            "cca3": iso3,
+            "region": region.strip(),
+            "subregion": (c.get("incomeLevel") or {}).get("value", "").strip() or None,
+            "capital": c.get("capitalCity"),
+            "population": population.get(iso3, 0),
+            "area": area.get(iso3, 0),
+        })
+    if not records:
+        return {"status": "error", "message": "World Bank API returned no country records."}
 
     run_id = _new_run_id()
     raw_path = _run_dir(run_id) / "raw_countries.json"
-    raw_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    raw_path.write_text(json.dumps(records, ensure_ascii=False), encoding="utf-8")
 
     tool_context.state["run_id"] = run_id
     tool_context.state["raw_path"] = str(raw_path)
     tool_context.state["artifacts"] = [str(raw_path)]
-    return {"status": "success", "run_id": run_id, "records_fetched": len(data),
-            "raw_path": str(raw_path), "source": config.API_URL}
+    return {"status": "success", "run_id": run_id, "records_fetched": len(records),
+            "raw_path": str(raw_path), "source": config.WB_BASE_URL}
 
 
 def transform_country_data(region: str, min_population: int, tool_context) -> dict:
     """Cleans and aggregates the raw country data fetched earlier in this run.
 
     Args:
-        region: Region to keep. One of "all", "Africa", "Americas", "Asia",
-            "Europe", "Oceania". Use "all" unless the user asked for a specific region.
+        region: Region to keep, matched case-insensitively as a substring of the World Bank
+            region name (e.g. "Europe" matches "Europe & Central Asia"; "Africa" matches
+            "Sub-Saharan Africa"). Use "all" unless the user asked for a specific region.
         min_population: Drop countries with fewer people than this. Use 0 unless the
             user asked to exclude small countries.
 
@@ -216,14 +260,12 @@ def transform_country_data(region: str, min_population: int, tool_context) -> di
     raw_path = tool_context.state.get("raw_path")
     if not raw_path or not os.path.exists(raw_path):
         return {"status": "error", "message": "No raw data found. Run the ingestion step first."}
-    if region.lower() != "all" and region.title() not in config.VALID_REGIONS:
-        return {"status": "error",
-                "message": f"Unknown region '{region}'. Use 'all' or one of {sorted(config.VALID_REGIONS)}."}
-
     raw = json.loads(Path(raw_path).read_text(encoding="utf-8"))
     processed = transform_records(raw, region=region, min_population=max(0, int(min_population)))
     if processed["kept_records"] == 0:
-        return {"status": "error", "message": "All records were filtered out; loosen the filters."}
+        regions = sorted({r["region"] for r in transform_records(raw)["countries"]})
+        return {"status": "error",
+                "message": f"No countries matched region='{region}'. Valid regions: {regions} or 'all'."}
 
     run_dir = _run_dir(tool_context.state["run_id"])
     processed_path = run_dir / "processed_summary.json"

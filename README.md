@@ -2,8 +2,8 @@
 
 An end-to-end data engineering pipeline where **Google Agent Development Kit (ADK) agents** orchestrate every step:
 
-1. **Ingest** – pull all countries from the public [REST Countries API](https://restcountries.com) (no API key needed)
-2. **Process** – clean, de-duplicate, filter, and aggregate population, area, and density by region and subregion
+1. **Ingest** – pull every country's population and land area from the public [World Bank Open Data API](https://datahelpdesk.worldbank.org/knowledgebase/articles/889392) (no API key needed)
+2. **Process** – clean, de-duplicate, filter, and aggregate population, land area, and density by World Bank region and income group
 3. **Visualize** – generate an HTML dashboard (Chart.js bar charts + summary tables)
 4. **Store** – upload raw JSON, processed JSON, cleaned CSV, and the HTML report to **Google Cloud Storage**
 5. **Report** – a final agent summarizes the run and key insights
@@ -31,11 +31,11 @@ Design notes:
 ### Processing logic
 | Step | What happens |
 |---|---|
-| Flatten | Nested JSON (`name.common`, `languages{}`, `currencies{}`) → flat rows |
-| Data quality | Drop records with no population or area (e.g. uninhabited territories); de-duplicate by ISO code |
+| Merge | Join three World Bank calls (country list, population `SP.POP.TOTL`, land area `AG.LND.TOTL.K2`) on ISO3 code; drop regional aggregates like "World" |
+| Data quality | Drop records with no population or area data; de-duplicate by ISO code |
 | Filter | Optional region and minimum-population filters chosen by the agent from the user's request |
 | Derive | People per km² for each country |
-| Aggregate by region & subregion | Country count, total population, total area, **population-weighted density**, median population, largest country, landlocked count, UN members, distinct languages |
+| Aggregate by region & income group | Country count, total population, total land area, **population-weighted density**, median population, largest country |
 | Rank | Top 10 most populous; top 10 densest (countries ≥ 1,000 km², so the list isn't only micro-states) |
 
 ## Project layout
@@ -77,7 +77,7 @@ pip install -r requirements.txt
 **Option A – command line**
 ```bash
 python run_pipeline.py
-python run_pipeline.py "Analyze only Asia and skip countries with fewer than 1 million people"
+python run_pipeline.py "Analyze only Europe and skip countries with fewer than 1 million people"
 ```
 The console shows each agent's tool calls and replies, then lists the `gs://` URIs. Open `output/latest_report.html` in a browser to view the dashboard (it is also stored in the bucket as `report.html`).
 
@@ -105,7 +105,7 @@ Set `STORAGE_BACKEND=local` in `.env` to write the "bucket" to `output/_local_bu
 |---|---|
 | `GCS_BUCKET is not set` | Add `GCS_BUCKET=...` to `.env` |
 | `DefaultCredentialsError` / 403 on upload | Run `gcloud auth application-default login`; make sure your account has *Storage Object Creator* on the bucket |
-| `API key not valid` / 429 from Gemini | Check `GOOGLE_API_KEY`; on free-tier rate limits wait a minute or set `ADK_MODEL=gemini-2.0-flash` |
+| `API key not valid` / 429 from Gemini | Check `GOOGLE_API_KEY`; on free-tier rate limits wait a minute or check the model name in `ADK_MODEL` |
 | Charts don't show | The report loads Chart.js from a CDN; open it with internet access (tables render either way) |
 
 ## Future improvements
